@@ -68,6 +68,7 @@ jobs:
             fi
           done
           echo "converted ok=$ok failed=$fail reflection-gaps=$gap"
+          echo "Smoke: MPXJ junit samples converted ok=$ok failed=$fail (non-adapter failures such as password-protected files) reflection-gaps=$gap" > /tmp/smoke-summary.txt
           [ "$gap" -eq 0 ]
 
       - name: Upload artifact (7 days)
@@ -86,7 +87,16 @@ jobs:
           set -euo pipefail
           sha="${GITHUB_SHA::7}"
           ver="$(node -p "require('./package.json').version")"
-          rm -rf /tmp/pub && mkdir -p /tmp/pub/bin
+          repo="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          rm -rf /tmp/pub
+          # Append to the existing binaries branch (keeps every published commit
+          # reachable for lockfile pins); start it if this is the first build.
+          if git ls-remote --exit-code --heads "${repo}" binaries >/dev/null 2>&1; then
+            git clone -q --branch binaries --single-branch --depth 1 "${repo}" /tmp/pub
+          else
+            mkdir -p /tmp/pub && (cd /tmp/pub && git init -q -b binaries)
+          fi
+          mkdir -p /tmp/pub/bin
           cp bin/mpxj-convert.exe /tmp/pub/bin/mpxj-convert.exe
           cp packages/_assets/LICENSE /tmp/pub/LICENSE
           cp packages/_assets/NOTICE /tmp/pub/NOTICE
@@ -102,11 +112,15 @@ jobs:
           }
           JSON
           echo "* binary" > /tmp/pub/.gitattributes
-          echo "Built from ${GITHUB_REPOSITORY}@${GITHUB_SHA} on $(date -u +%FT%TZ)" > /tmp/pub/BUILD.txt
+          {
+            echo "Built from ${GITHUB_REPOSITORY}@${GITHUB_SHA} on $(date -u +%FT%TZ)"
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            cat /tmp/smoke-summary.txt
+            echo "SHA256: $(sha256sum bin/mpxj-convert.exe | cut -d' ' -f1)"
+          } > /tmp/pub/BUILD.txt
           cd /tmp/pub
-          git init -q -b binaries
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A && git commit -q -m "mpxj-convert.exe from ${sha}"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" binaries:binaries
+          git push -q "${repo}" binaries:binaries
           echo "pushed binaries branch"
