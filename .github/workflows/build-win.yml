@@ -1,8 +1,9 @@
-# Valaris fork: build ONLY the Windows x64 binary with the completed reflection
-# config, prove it converts MPXJ's samples (and our fixture, if committed), and
-# publish the exe to the `binaries` branch of this fork — plain git over https,
+# Valaris fork: build the linux-x64 and win32-x64 binaries with the completed
+# reflection config, prove each converts MPXJ's samples, and publish BOTH into
+# one package on the `binaries` branch of this fork — plain git over https,
 # because our network reaches github.com but not Actions artifact storage or
-# release-asset downloads.
+# release-asset downloads. (Our Azure App Service slots are Linux; dev boxes
+# are Windows.)
 name: build-win
 
 on:
@@ -16,7 +17,18 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-2022
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runs-on: ubuntu-24.04
+            bin: mpxj-convert
+          - target: win32-x64
+            runs-on: windows-2022
+            bin: mpxj-convert.exe
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v6
 
@@ -28,7 +40,8 @@ jobs:
           native-image-job-reports: "true"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Maven
+      - name: Set up Maven (windows only)
+        if: runner.os == 'Windows'
         uses: stCarolas/setup-maven@v5
         with:
           maven-version: 3.9.9
@@ -57,29 +70,55 @@ jobs:
           ok=0; fail=0; gap=0
           for f in /tmp/mpxj/junit/data/*.mpp test/fixtures/*.mpp; do
             [ -f "$f" ] || continue
-            if ./bin/mpxj-convert.exe "$f" "/tmp/out/$(basename "$f").xml" 2>/tmp/err.txt; then
+            if "./bin/${{ matrix.bin }}" "$f" "/tmp/out/$(basename "$f").xml" 2>/tmp/err.txt; then
               ok=$((ok+1))
             else
               fail=$((fail+1)); echo "FAILED: $f"; grep -v "Log4j" /tmp/err.txt | head -3
               # An adapter-constructor failure means the reflection config is still short.
               if grep -q "No default constructor found" /tmp/err.txt; then gap=$((gap+1)); fi
-              # Fixtures must convert; MPXJ samples may legitimately be unreadable (corrupt-file tests).
+              # Fixtures must convert; MPXJ samples may legitimately be unreadable (password-protected).
               case "$f" in test/fixtures/*) exit 1;; esac
             fi
           done
           echo "converted ok=$ok failed=$fail reflection-gaps=$gap"
-          echo "Smoke: MPXJ junit samples converted ok=$ok failed=$fail (non-adapter failures such as password-protected files) reflection-gaps=$gap" > /tmp/smoke-summary.txt
+          echo "${{ matrix.target }}: MPXJ junit samples converted ok=$ok failed=$fail (non-adapter failures such as password-protected files) reflection-gaps=$gap" > smoke-${{ matrix.target }}.txt
           [ "$gap" -eq 0 ]
 
-      - name: Upload artifact (7 days)
+      # The runner has a JDK, so it cannot catch a binary that silently needs
+      # one (upstream 0.1.5/0.1.6 shipped broken that way: AWT dlopen). Run one
+      # conversion in a JDK-less container on the Linux side.
+      - name: Verify the Linux binary runs without a JDK
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}/bin/mpxj-convert:/mpxj-convert:ro" \
+            -v /tmp/mpxj/junit/data:/data:ro \
+            debian:12-slim \
+            /mpxj-convert /data/mpp14task.mpp /tmp/out.xml
+
+      - name: Upload binary + smoke summary
         uses: actions/upload-artifact@v7
         with:
-          name: mpxj-convert-win32-x64
-          path: bin/mpxj-convert.exe
+          name: bin-${{ matrix.target }}
+          path: |
+            bin/${{ matrix.bin }}
+            smoke-${{ matrix.target }}.txt
           if-no-files-found: error
           retention-days: 7
 
-      - name: Publish exe to the binaries branch
+  publish:
+    name: publish to the binaries branch
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Append both binaries to the binaries branch
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,18 +135,18 @@ jobs:
           else
             mkdir -p /tmp/pub && (cd /tmp/pub && git init -q -b binaries)
           fi
-          mkdir -p /tmp/pub/bin
-          cp bin/mpxj-convert.exe /tmp/pub/bin/mpxj-convert.exe
+          rm -rf /tmp/pub/bin && mkdir -p /tmp/pub/bin/linux-x64 /tmp/pub/bin/win32-x64
+          # Artifacts are zips and drop the +x bit — restore it.
+          install -m 0755 artifacts/bin-linux-x64/bin/mpxj-convert /tmp/pub/bin/linux-x64/mpxj-convert
+          install -m 0755 artifacts/bin-win32-x64/bin/mpxj-convert.exe /tmp/pub/bin/win32-x64/mpxj-convert.exe
           cp packages/_assets/LICENSE /tmp/pub/LICENSE
           cp packages/_assets/NOTICE /tmp/pub/NOTICE
           cat > /tmp/pub/package.json <<JSON
           {
             "name": "mppjs-win32-x64-valaris",
             "version": "${ver}",
-            "description": "mppjs Windows x64 native binary rebuilt with the complete MSPDI reflection config (built from ${GITHUB_REPOSITORY}@${sha})",
+            "description": "mppjs native converter (linux-x64 + win32-x64) rebuilt with the complete MSPDI reflection config (built from ${GITHUB_REPOSITORY}@${sha}); binaries under bin/<platform>-<arch>/",
             "license": "LGPL-2.1-or-later",
-            "os": ["win32"],
-            "cpu": ["x64"],
             "files": ["bin", "LICENSE", "NOTICE", "BUILD.txt"]
           }
           JSON
@@ -115,12 +154,14 @@ jobs:
           {
             echo "Built from ${GITHUB_REPOSITORY}@${GITHUB_SHA} on $(date -u +%FT%TZ)"
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            cat /tmp/smoke-summary.txt
-            echo "SHA256: $(sha256sum bin/mpxj-convert.exe | cut -d' ' -f1)"
+            cat artifacts/bin-linux-x64/smoke-linux-x64.txt
+            cat artifacts/bin-win32-x64/smoke-win32-x64.txt
+            echo "SHA256 linux-x64: $(sha256sum /tmp/pub/bin/linux-x64/mpxj-convert | cut -d' ' -f1)"
+            echo "SHA256 win32-x64: $(sha256sum /tmp/pub/bin/win32-x64/mpxj-convert.exe | cut -d' ' -f1)"
           } > /tmp/pub/BUILD.txt
           cd /tmp/pub
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A && git commit -q -m "mpxj-convert.exe from ${sha}"
+          git add -A && git commit -q -m "linux-x64 + win32-x64 converters from ${sha}"
           git push -q "${repo}" binaries:binaries
           echo "pushed binaries branch"
