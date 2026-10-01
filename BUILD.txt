@@ -1,4 +1,6 @@
-Built from rmorgan1979/mppjs@8ef7c287ede60994fed87450ca7a0cda64dac5c4 on 2026-10-01T15:59:37Z
-Run: https://github.com/rmorgan1979/mppjs/actions/runs/36887921570
-Smoke: MPXJ junit samples converted ok=224 failed=1 (non-adapter failures such as password-protected files) reflection-gaps=0
-SHA256: af65ba973d39a71fd334f0a372a7db25e78599d4329f88d72b746e3b0b9aea5f
+Built from rmorgan1979/mppjs@a5a9bc853c251e867ced67b147a656c85a3fd3ac on 2026-10-01T16:15:23Z
+Run: https://github.com/rmorgan1979/mppjs/actions/runs/36890058418
+linux-x64: MPXJ junit samples converted ok=224 failed=1 (non-adapter failures such as password-protected files) reflection-gaps=0
+win32-x64: MPXJ junit samples converted ok=224 failed=1 (non-adapter failures such as password-protected files) reflection-gaps=0
+SHA256 linux-x64: 2d4266a5538e3dd2b0359dbea0b9ea3b1a0ebe4431b4b1a059e4d98ecfe02b39
+SHA256 win32-x64: ae500f7e30955a7cd4d59ac7c0d0f86700a4cc9e49e918982d3550297d43d41c

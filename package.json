@@ -1,9 +1,7 @@
 {
   "name": "mppjs-win32-x64-valaris",
   "version": "0.1.8",
-  "description": "mppjs Windows x64 native binary rebuilt with the complete MSPDI reflection config (built from rmorgan1979/mppjs@8ef7c28)",
+  "description": "mppjs native converter (linux-x64 + win32-x64) rebuilt with the complete MSPDI reflection config (built from rmorgan1979/mppjs@a5a9bc8); binaries under bin/<platform>-<arch>/",
   "license": "LGPL-2.1-or-later",
-  "os": ["win32"],
-  "cpu": ["x64"],
   "files": ["bin", "LICENSE", "NOTICE", "BUILD.txt"]
 }
